@@ -168,8 +168,6 @@ func startdownload(args []string) {
 	}
 
 	resp_json := request.Parsebody_to_json(resp)
-	b, _ := json.Marshal(resp_json)
-	logtool.SugLog.Info(string(b))
 
 	platform_digest := get_platform_digest(resp_json)
 
