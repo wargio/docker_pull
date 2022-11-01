@@ -45,7 +45,7 @@ func (f *usefile) Readio_to_file(r io.ReadCloser) {
 		//line, err := reader.ReadBytes('\n')
 		if err != nil {
 			if err == io.EOF{
-				fmt.Println("写完了")
+				fmt.Println("流数据读取结束")
             }
 			fmt.Println(err,"ioerr")
 			break

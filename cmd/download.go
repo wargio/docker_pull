@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+
 	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
 )
@@ -30,25 +31,63 @@ var (
 	auth_head   map[string]string
 	resp        *resty.Response
 	err         error
-	registry string
-	platform string
-	plist bool
+	registry    string
+	platform    string
+	plist       bool
 )
 
 func init() {
 	rootCmd.AddCommand(downloadCmd)
-	downloadCmd.PersistentFlags().StringVarP(&platform,"platform","p","amd64","Select platform system architecture")
+	downloadCmd.PersistentFlags().StringVarP(&platform, "platform", "p", "amd64", "Select platform system architecture")
 	downloadCmd.PersistentFlags().BoolVarP(&plist, "list", "l", false, "list platform system architecture")
 }
 
 var downloadCmd = &cobra.Command{
 	Use:   "download",
 	Short: "download image only",
-	Args: cobra.MinimumNArgs(1),
+	Args:  cobra.MinimumNArgs(1),
 	Long:  `All software has versions. This is pull's`,
 	Run: func(cmd *cobra.Command, args []string) {
 		startdownload(args)
 	},
+}
+
+func get_platform_digest(resp_json map[string]interface{}) (platform_digest string) {
+	var platformv_list []string
+	manifests, isOk := resp_json["manifests"]
+	if !isOk {
+		if !plist {
+
+			platform_digest_any, _ := resp_json["tag"]
+
+			platform_digest = platform_digest_any.(string)
+			return
+		} else {
+			manifests = resp_json
+		}
+	}
+
+	if plist {
+		data, _ := json.MarshalIndent(manifests, "", " ")
+		fmt.Println(string(data))
+		os.Exit(0)
+	}
+
+	for _, v := range manifests.([]interface{}) {
+
+		platformv := v.(map[string]interface{})["platform"]
+		platformv = platformv.(map[string]interface{})["architecture"].(string)
+		if platformv == platform {
+			platform_digest = v.(map[string]interface{})["digest"].(string)
+			break
+		}
+		platformv_list = append(platformv_list, platformv.(string))
+
+	}
+	if platform_digest == "" {
+		logtool.SugLog.Fatalf("please use -p %v\n", platformv_list)
+	}
+	return
 }
 
 func startdownload(args []string) {
@@ -56,37 +95,36 @@ func startdownload(args []string) {
 	// Look for the Docker image to download
 	inargv := args
 	var img string
-	var repo string= "library"
+	var repo string = "library"
 	var tag string = "latest"
-	var imlist string 
+	var imlist string
 	var digest string
- 	var imgpartstr string
+	var imgpartstr string
 	registry = "registry-1.docker.io"
 
 	if strings.Contains(inargv[0], "@") {
 		s := strings.Split(inargv[0], "@")
 		imlist, digest = s[0], s[1]
 	} else {
-		imlist, digest = inargv[0],""
+		imlist, digest = inargv[0], ""
 	}
-	
-	if strings.Contains(inargv[0],":"){
+
+	if strings.Contains(inargv[0], ":") {
 		s := strings.Split(imlist, ":")
-		imgpartstr, tag = s[0],s[1]
-	}else{
-		imgpartstr, tag =imlist,"latest"
+		imgpartstr, tag = s[0], s[1]
+	} else {
+		imgpartstr, tag = imlist, "latest"
 	}
 
 	imgpartlist := strings.Split(imgpartstr, "/")
 	img = imgpartlist[len(imgpartlist)-1]
-
 
 	// Docker client doesn't seem to consider the first element as a potential registry unless there is a '.' or ':'
 	if len(imgpartlist) > 1 && (strings.Contains(imgpartlist[0], ".") || strings.Contains(imgpartlist[0], ":")) {
 		registry = imgpartlist[0]
 		repo = strings.Join(imgpartlist[1:len(imgpartlist)-1], "/")
 	} else {
-		if len(imgpartlist[:len(imgpartlist)-1])!= 0{
+		if len(imgpartlist[:len(imgpartlist)-1]) != 0 {
 			repo = strings.Join(imgpartlist[:len(imgpartlist)-1], "/")
 		}
 	}
@@ -113,57 +151,35 @@ func startdownload(args []string) {
 	//Fetch manifest v2 and get image layer digests
 
 	var real_tag string
-	if digest != ""{
-		real_tag=digest
-	}else{
-		real_tag=tag
+	if digest != "" {
+		real_tag = digest
+	} else {
+		real_tag = tag
 	}
 	auth_head = get_auth_head("application/vnd.docker.distribution.manifest.list.v2+json")
-	resp, err := request.Requests(makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", real_tag)).
-		Setheads(auth_head).
-		Settls().
-		Get()
-		logtool.Errorerror(err)
-	if resp.StatusCode() != 200 {
-		logtool.SugLog.Fatal("[-] Cannot fetch manifest for %v [HTTP %v]", repository, resp.Status())
-	}
-
-
-	resp_json :=request.Parsebody_to_json(resp)
-
-	var platformv_list []string
-	var platform_digest string
-
-	if plist{
-		data, _ := json.MarshalIndent(resp_json["manifests"],""," ")
-		fmt.Println(string(data))
-		os.Exit(0)
-	}
-	for _,v := range resp_json["manifests"].([]interface{} ) {
-
-		platformv := v.(map[string]interface{})["platform"]
-		platformv = platformv.(map[string]interface{})["architecture"].(string)
-		if platformv == platform{
-			platform_digest = v.(map[string]interface{})["digest"].(string)
-			break
-		}
-		platformv_list = append(platformv_list, platformv.(string))
-
-
-	}
-
-	if platform_digest == "" {
-		logtool.SugLog.Fatalf("please use -p %v\n",platformv_list )
-	}
-
-
-	auth_head = get_auth_head("application/vnd.docker.distribution.manifest.v2+json")
-	resp, err = request.Requests(makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", platform_digest)).
+	query_url := makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", real_tag)
+	resp, err := request.Requests(query_url).
 		Setheads(auth_head).
 		Settls().
 		Get()
 	logtool.Errorerror(err)
+	if resp.StatusCode() != 200 {
+		logtool.SugLog.Fatal("[-] Cannot fetch manifest for %v [HTTP %v]", repository, resp.Status())
+	}
 
+	resp_json := request.Parsebody_to_json(resp)
+	b, _ := json.Marshal(resp_json)
+	logtool.SugLog.Info(string(b))
+
+	platform_digest := get_platform_digest(resp_json)
+
+	auth_head = get_auth_head("application/vnd.docker.distribution.manifest.v2+json")
+	query_url = makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", platform_digest)
+	resp, err = request.Requests(query_url).
+		Setheads(auth_head).
+		Settls().
+		Get()
+	logtool.Errorerror(err)
 
 	rresp := request.Parsebody_to_json(resp)
 	layers := rresp["layers"].([]interface{})
@@ -215,8 +231,8 @@ func startdownload(args []string) {
 		fake_layerid := aes.Sha256t(makestr.Joinstring(parentid, "\n", ublob, "\n"))
 		layerdir := makestr.Joinstring(imgdir, "/", fake_layerid)
 		os.Mkdir(layerdir, os.ModePerm)
-		go Download_img(layer,layerdir,ublob,&wg)
-	
+		go Download_img(layer, layerdir, ublob, &wg)
+
 		content[0].Layers = append(content[0].Layers, makestr.Joinstring(fake_layerid, "/layer_gzip.tar"))
 		//Creating json file
 		f2 := iowrite.Uflie(makestr.Joinstring(layerdir, "/json"))
@@ -245,7 +261,7 @@ func startdownload(args []string) {
 		f2.BufWriter.Write(data)
 		f2.Close()
 
-		if x == len(layers){
+		if x == len(layers) {
 			last_fake_layerid = fake_layerid
 		}
 
@@ -257,24 +273,23 @@ func startdownload(args []string) {
 	f3.BufWriter.Write(data)
 	f3.Close()
 
-
 	var content1 map[string](map[string]string)
-	if len(imgpartlist[:len(imgpartlist)-1]) !=0{
+	if len(imgpartlist[:len(imgpartlist)-1]) != 0 {
 
-		content1 =  map[string](map[string]string){
-			makestr.Joinstring( strings.Join(imgpartlist[:len(imgpartlist)-1], "/") ,img) : map[string]string{tag: last_fake_layerid },
+		content1 = map[string](map[string]string){
+			makestr.Joinstring(strings.Join(imgpartlist[:len(imgpartlist)-1], "/"), img): map[string]string{tag: last_fake_layerid},
 		}
-	}else{
-		content1 =  map[string](map[string]string){
+	} else {
+		content1 = map[string](map[string]string){
 			img: map[string]string{tag: last_fake_layerid},
 		}
 
 	}
-	
+
 	f5 := iowrite.Uflie(makestr.Joinstring(imgdir, "/repositories"))
 	data1, _ := json.Marshal(content1)
 	f5.BufWriter.Write(data1)
-	f5.Close()	
+	f5.Close()
 
 	//Create image tar and clean tmp folder
 	//docker_tar:= makestr.Joinstring(
@@ -283,18 +298,16 @@ func startdownload(args []string) {
 	fmt.Print("Creating archive...")
 	os.Stdout.Sync()
 
-	if check_path.Check_path(img+".tar").Exists() {
-		os.Remove(img+".tar")
+	if check_path.Check_path(img + ".tar").Exists() {
+		os.Remove(img + ".tar")
 	}
 	tartool.TarGz(img+".tar", imgdir)
 	os.RemoveAll(imgdir)
-	fmt.Printf("打包完成，生成文件 %v\n",img+".tar" )
+	fmt.Printf("打包完成，生成文件 %v\n", img+".tar")
 }
 
+func Download_img(layer interface{}, layerdir string, ublob string, w *sync.WaitGroup) {
 
-
-func Download_img(layer interface{},layerdir string,ublob string,w *sync.WaitGroup){
-	
 	//Creating VERSION file
 	f := iowrite.Uflie(makestr.Joinstring(layerdir, "/VERSION"))
 	f.BufWriter.WriteString("1.0")
@@ -303,7 +316,7 @@ func Download_img(layer interface{},layerdir string,ublob string,w *sync.WaitGro
 	// Creating layer.tar file
 	logtool.SugLog.Infof("%v%v", ublob[7:19], ": Downloading...")
 	os.Stdout.Sync()
-	auth_head := get_auth_head("application/vnd.docker.distribution.manifest.v2+json",auth_head)
+	auth_head := get_auth_head("application/vnd.docker.distribution.manifest.v2+json", auth_head)
 	bresp, err := request.Requests(
 		makestr.Joinstring("https://", registry, "/v2/", repository, "/blobs/", ublob)).
 		Notparse().
@@ -329,59 +342,57 @@ func Download_img(layer interface{},layerdir string,ublob string,w *sync.WaitGro
 	} else {
 		logtool.SugLog.Info("bad request")
 	}
-	statusok:
-		//Stream download and follow the progress
-		unit, _ := strconv.Atoi(bresp.Header()["Content-Length"][0])
-		unit = unit / 50
-		acc := 0
-		nb_traits := 0
-		progress_bar(ublob, nb_traits)
-		f1 := iowrite.Uflie(makestr.Joinstring(layerdir, "/layer_gzip.tar"))
-		buf := make([]byte, 8192)
-		reader := bufio.NewReader(bresp.RawBody())
+statusok:
+	//Stream download and follow the progress
+	unit, _ := strconv.Atoi(bresp.Header()["Content-Length"][0])
+	unit = unit / 50
+	acc := 0
+	nb_traits := 0
+	progress_bar(ublob, nb_traits)
+	f1 := iowrite.Uflie(makestr.Joinstring(layerdir, "/layer_gzip.tar"))
+	buf := make([]byte, 8192)
+	reader := bufio.NewReader(bresp.RawBody())
 
-		for {
-			n, err := reader.Read(buf)
-			f1.BufWriter.Write(buf[:n])
-			acc = acc + n
-			if acc > unit {
-				nb_traits = nb_traits + 1
-				progress_bar(ublob, nb_traits)
-				acc = 0
-			}
-			
-			//line, err := reader.ReadBytes('\n')
-			if err != nil {
-				if err == io.EOF {
-					fmt.Println("")
-					//logtool.SugLog.Info("ioFinish")
-				} else {
-					logtool.SugLog.Fatal(err, "ioerr")
-				}
-				break
-			}
+	for {
+		n, err := reader.Read(buf)
+		f1.BufWriter.Write(buf[:n])
+		acc = acc + n
+		if acc > unit {
+			nb_traits = nb_traits + 1
+			progress_bar(ublob, nb_traits)
+			acc = 0
 		}
-		f1.Close()
-		fmt.Printf("%v: Extracting...%v", ublob[7:19], strings.Repeat(" ", 50))
-		os.Stdout.Sync()
 
-		fmt.Printf("%v: Pull complete [%v]\n",
-			ublob[7:19], bresp.Header()["Content-Length"])
-		(*w).Done()
+		//line, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err == io.EOF {
+				fmt.Println("")
+				//logtool.SugLog.Info("ioFinish")
+			} else {
+				logtool.SugLog.Fatal(err, "ioerr")
+			}
+			break
+		}
+	}
+	f1.Close()
+	fmt.Printf("%v: Extracting...%v", ublob[7:19], strings.Repeat(" ", 50))
+	os.Stdout.Sync()
+
+	fmt.Printf("%v: Pull complete [%v]\n",
+		ublob[7:19], bresp.Header()["Content-Length"])
+	(*w).Done()
 }
 
-
-
 // Get Docker token (this function is useless for unauthenticated registries like Microsoft)
-func get_auth_head(qtype string,a ...any ) map[string]string {
-	if len(a) != 0  {
-			t := a[0].(map[string]string)
-			tm:= t["expires_in"]
-			st:= timetool.Strtorime(tm,"UTC")
-			if st.Add(-2*time.Second).After(time.Now().UTC()){
-				t["Accept"]=qtype
-				return t
-			}
+func get_auth_head(qtype string, a ...any) map[string]string {
+	if len(a) != 0 {
+		t := a[0].(map[string]string)
+		tm := t["expires_in"]
+		st := timetool.Strtorime(tm, "UTC")
+		if st.Add(-2 * time.Second).After(time.Now().UTC()) {
+			t["Accept"] = qtype
+			return t
+		}
 
 	}
 	resp, err := request.Requests(
@@ -390,19 +401,19 @@ func get_auth_head(qtype string,a ...any ) map[string]string {
 		Get()
 	logtool.Fatalerror(err)
 	resp_json := request.Parsebody_to_json(resp)
-	expires_in:= int(resp_json["expires_in"].(float64))
+	expires_in := int(resp_json["expires_in"].(float64))
 	issued_at := resp_json["issued_at"].(string)
 
-	expires_time := timetool.Strtorime(issued_at,"UTC").
-					Add(time.Duration(expires_in) * (time.Hour)).
-					Format("2006-01-02 15:04:05")
+	expires_time := timetool.Strtorime(issued_at, "UTC").
+		Add(time.Duration(expires_in) * (time.Hour)).
+		Format("2006-01-02 15:04:05")
 
-	auth_head := map[string]string{"Authorization": makestr.Joinstring("Bearer ", resp_json["token"].(string)), 
-								   "Accept": qtype,
-								   "expires_in" : expires_time,
-								   }
+	auth_head := map[string]string{"Authorization": makestr.Joinstring("Bearer ", resp_json["token"].(string)),
+		"Accept":     qtype,
+		"expires_in": expires_time,
+	}
 	return auth_head
-	
+
 }
 
 //Docker style progress bar
