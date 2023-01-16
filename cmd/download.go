@@ -14,6 +14,7 @@ import (
 	"go_pull/pkgs/util/tartool"
 	"go_pull/pkgs/util/timetool"
 	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -35,6 +36,18 @@ var (
 	platform    string
 	plist       bool
 )
+
+type download_parameter struct {
+	layer    interface{}
+	layerdir string
+	ublob    string
+	startbyt int
+	endbyt   int
+	n        int
+	w        *sync.WaitGroup
+	progress string
+	tfile    *iowrite.Usefile
+}
 
 func init() {
 	rootCmd.AddCommand(downloadCmd)
@@ -139,7 +152,7 @@ func startdownload(args []string) {
 		Get()
 	logtool.Fatalerror(err)
 	if resp.StatusCode() == 401 {
-		auth_url = resp.Header()["Www-Authenticate"][0]
+		auth_url = resp.Header().Get("Www-Authenticate")
 		reg_Header_list := strings.Split(auth_url, "\"")
 		auth_url = reg_Header_list[1]
 		if len(reg_Header_list) > 4 {
@@ -229,7 +242,21 @@ func startdownload(args []string) {
 		fake_layerid := aes.Sha256t(makestr.Joinstring(parentid, "\n", ublob, "\n"))
 		layerdir := makestr.Joinstring(imgdir, "/", fake_layerid)
 		os.Mkdir(layerdir, os.ModePerm)
-		go Download_img(layer, layerdir, ublob, &wg)
+		//Creating VERSION file
+		vf := iowrite.Uflie(makestr.Joinstring(layerdir, "/VERSION"))
+		vf.BufWriter.WriteString("1.0")
+		vf.Close()
+
+		//layer interface{}, layerdir string, ublob string, length string, w *sync.WaitGroup
+
+		go Download_img(download_parameter{
+			layer:    layer,
+			layerdir: layerdir,
+			ublob:    ublob,
+			startbyt: 0,
+			n:        0,
+			w:        &wg,
+		})
 
 		content[0].Layers = append(content[0].Layers, makestr.Joinstring(fake_layerid, "/layer_gzip.tar"))
 		//Creating json file
@@ -304,81 +331,105 @@ func startdownload(args []string) {
 	fmt.Printf("打包完成，生成文件 %v\n", img+".tar")
 }
 
-func Download_img(layer interface{}, layerdir string, ublob string, w *sync.WaitGroup) {
+func check_head(Header http.Header) bool {
+	if Header.Get("Accept-Ranges") == "bytes" {
+		return true
+	}
+	return false
+}
 
-	//Creating VERSION file
-	f := iowrite.Uflie(makestr.Joinstring(layerdir, "/VERSION"))
-	f.BufWriter.WriteString("1.0")
-	f.Close()
+// func Download_img(layer interface{}, layerdir string, ublob string, length string, w *sync.WaitGroup) {
+func Download_img(parameter download_parameter) {
+	if parameter.n == 0 {
+		f1 := iowrite.Uflie(makestr.Joinstring(parameter.layerdir, "/layer_gzip.tar"))
+		parameter.tfile = f1
+		logtool.SugLog.Infof("%v%v", parameter.ublob[7:19], ": Downloading...")
+	} else if parameter.n < 5 {
+		logtool.SugLog.Infof("%v%v", parameter.ublob[7:19], ": try to download again...")
+	}
 
+	parameter.n += 1
 	// Creating layer.tar file
-	logtool.SugLog.Infof("%v%v", ublob[7:19], ": Downloading...")
 	os.Stdout.Sync()
 	auth_head := get_auth_head("application/vnd.docker.distribution.manifest.v2+json", auth_head)
 	bresp, err := request.Requests(
-		makestr.Joinstring("https://", registry, "/v2/", repository, "/blobs/", ublob)).
+		makestr.Joinstring("https://", registry, "/v2/", repository, "/blobs/", parameter.ublob)).
 		Notparse().
 		Setheads(auth_head).
+		Setheads(map[string]string{"Range": "bytes=" + strconv.Itoa(parameter.startbyt) + "-"}).
 		Settls().
 		Get()
-
 	logtool.Fatalerror(err)
-	if bresp.StatusCode() != 200 {
-		logtool.SugLog.Fatal(layer.(map[string]interface{}))
-		bresp, _ := request.Requests(layer.(map[string]interface{})["urls"].([]string)[0]).
-			Setheads(auth_head).
-			Settls().
-			Get()
-		if bresp.StatusCode() != 200 {
-			fmt.Printf("\rERROR: Cannot download layer %v [HTTP %v %v]", ublob[7:19], bresp.StatusCode(), bresp.Header()["Content-Length"])
-			logtool.SugLog.Info(bresp)
-			os.Exit(1)
+	if bresp.StatusCode() != 206 && bresp.StatusCode() != 200 {
+		logtool.SugLog.Warn(parameter.layer.(map[string]interface{}))
+		urls, ok := parameter.layer.(map[string]interface{})["urls"]
+		if ok {
+			bresp, _ := request.Requests(urls.([]string)[0]).
+				Setheads(auth_head).
+				Settls().
+				Get()
+			if bresp.StatusCode() != 206 && bresp.StatusCode() != 200 {
+				fmt.Printf("\rERROR: Cannot download layer %v [HTTP %v %v]", parameter.ublob[7:19], bresp.StatusCode(), bresp.Header()["Content-Length"])
+				logtool.SugLog.Fatal(bresp)
+			}
+		} else {
+			logtool.SugLog.Fatalf("no url to download layer %v", parameter.ublob[7:19])
 		}
-
-	} else if bresp.StatusCode() == 200 {
-		goto statusok
-	} else {
-		logtool.SugLog.Info("bad request")
 	}
-statusok:
+
 	//Stream download and follow the progress
-	unit, _ := strconv.Atoi(bresp.Header()["Content-Length"][0])
+	unit, _ := strconv.Atoi(bresp.Header().Get("Content-Length"))
 	unit = unit / 50
 	acc := 0
 	nb_traits := 0
-	progress_bar(ublob, nb_traits)
-	f1 := iowrite.Uflie(makestr.Joinstring(layerdir, "/layer_gzip.tar"))
+	progress_bar(parameter.ublob, nb_traits)
 	buf := make([]byte, 8192)
 	reader := bufio.NewReader(bresp.RawBody())
 
 	for {
 		n, err := reader.Read(buf)
-		f1.BufWriter.Write(buf[:n])
-		acc = acc + n
-		if acc > unit {
-			nb_traits = nb_traits + 1
-			progress_bar(ublob, nb_traits)
-			acc = 0
-		}
-
-		//line, err := reader.ReadBytes('\n')
 		if err != nil {
 			if err == io.EOF {
 				fmt.Println("")
-				//logtool.SugLog.Info("ioFinish")
+				parameter.progress = "done"
 			} else {
-				logtool.SugLog.Fatal(err, "ioerr")
+				logtool.SugLog.Warn(err, " ioerr")
+				if parameter.n >= 5 {
+					parameter.progress = "err"
+					return
+				}
+				Download_img(parameter)
 			}
 			break
 		}
-	}
-	f1.Close()
-	fmt.Printf("%v: Extracting...%v", ublob[7:19], strings.Repeat(" ", 50))
-	os.Stdout.Sync()
+		parameter.startbyt = parameter.startbyt + n
+		parameter.tfile.BufWriter.Write(buf[:n])
+		acc = acc + n
+		if acc > unit {
+			nb_traits = nb_traits + 1
+			progress_bar(parameter.ublob, nb_traits)
+			acc = 0
+		}
 
-	fmt.Printf("%v: Pull complete [%v]\n",
-		ublob[7:19], bresp.Header()["Content-Length"])
-	(*w).Done()
+	}
+	defer func() {
+		if parameter.progress == "" {
+			return
+		}
+		if parameter.progress == "done" {
+			fmt.Printf("%v: Extracting...%v", parameter.ublob[7:19], strings.Repeat(" ", 50))
+			os.Stdout.Sync()
+
+			fmt.Printf("%v: Pull complete [%v]\n",
+				parameter.ublob[7:19], bresp.Header()["Content-Length"])
+			(*parameter.w).Done()
+			parameter.tfile.Close()
+		} else if parameter.progress == "err" {
+			logtool.SugLog.Fatal("The network is abnormal, reconnecting more than 5 times")
+		}
+		parameter.tfile.Close()
+	}()
+
 }
 
 // Get Docker token (this function is useless for unauthenticated registries like Microsoft)

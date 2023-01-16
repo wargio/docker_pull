@@ -9,13 +9,13 @@ import (
 	//"strconv"
 	//"time"
 )
-type usefile struct{
+type Usefile struct{
 	BufWriter *bufio.Writer
 	bufReader *bufio.Reader
 	dstFile  *os.File
 }
 
-func Uflie(filepath string) *usefile{
+func Uflie(filepath string) *Usefile{
 	dstFile, err := os.OpenFile(filepath, os.O_CREATE|os.O_WRONLY, os.ModePerm)
 	if err != nil {
 		log.Fatalf("open file failed, err:%v", err)
@@ -26,17 +26,17 @@ func Uflie(filepath string) *usefile{
 	//	dstFile.Close()
 	//	fmt.Println("文件写入耗时：", time.Now().Sub(st).Seconds(), "s")
 	//}()
-	return &usefile{
+	return &Usefile{
 		BufWriter: bufWriter,
 		dstFile: dstFile}
 }
 
-func (f *usefile) Close() {
+func (f *Usefile) Close() {
 	f.BufWriter.Flush()
 	f.dstFile.Close()
 }
 
-func (f *usefile) Readio_to_file(r io.ReadCloser) {
+func (f *Usefile) Readio_to_file(r io.ReadCloser) {
 	reader:=bufio.NewReader(r)
 	buf := make([]byte,4*1024)
 	for {
