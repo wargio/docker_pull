@@ -3,6 +3,10 @@ package request
 import (
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
+	"net"
+	"net/url"
+	"time"
 
 	//"fmt"
 	//"os"
@@ -50,8 +54,56 @@ func (c *reqr) post(i ...string) (*resty.Response, error) {
 	return c.Clientr.Post(c.Url)
 }
 
+type Logger struct {
+}
+
+func (e Logger) Errorf(format string, v ...interface{}) {
+	for _, e := range v {
+		switch e.(type) {
+		case *url.Error:
+			//fmt.Printf("%#v\v", e.(*url.Error))
+			switch b := e.(*url.Error).Err.(type) {
+			case *net.OpError:
+				{
+					fmt.Printf("%#v\n", b)
+				}
+			}
+			//fmt.Println(a, "(asd)")
+		}
+		//if errors.Is(e, url.Error) {
+		//	print(1)
+	}
+
+	fmt.Printf("%#v\n", v)
+
+}
+
+func (e Logger) Warnf(format string, v ...interface{}) {
+}
+
+func (e Logger) Debugf(format string, v ...interface{}) {
+}
+
 func Requests(url string) *reqr {
 	client := resty.New()
+	client.SetRetryCount(100).
+		SetRetryWaitTime(1 * time.Second).
+		AddRetryCondition(
+			func(response *resty.Response, err error) bool {
+				fmt.Println("重试")
+				fmt.Println("重试")
+
+				return true
+				if !response.IsSuccess() {
+					return true
+				}
+				return false
+			},
+		).AddRetryAfterErrorCondition()
+
+	client.SetLogger(&Logger{})
+	//client.SetLogger(logtool.SugLog)
+
 	return &reqr{Client: client,
 		Clientr: client.R(),
 		Url:     url}

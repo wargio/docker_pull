@@ -414,7 +414,7 @@ func get_auth_head(qtype string, a ...any) map[string]string {
 
 }
 
-//Docker style progress bar
+// Docker style progress bar
 func progress_bar(ublob string, nb_traits int) {
 	fmt.Print(makestr.Joinstring("", ublob[7:19], ": Downloading ["))
 	for i := 0; i < nb_traits; i++ {

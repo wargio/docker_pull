@@ -2,11 +2,12 @@ package request
 
 import (
 	"fmt"
+	"os"
+
 	//"go_pull/pkgs/util/iowrite"
+	"encoding/json"
 	"strconv"
 	"testing"
-	 "encoding/json"
-
 )
 
 func Test_request(t *testing.T) {
@@ -20,8 +21,8 @@ func Test_request(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			//url:="http://jsonplaceholder.typicode.com/posts/2"
-			//url := "https://www.baidu.com"
-			url := "http://wh.mapall.cn:41810/index"
+			url := "https://www.baidu.com"
+			//url := "https://www.oschina.net/code/snippet_554046_35134"
 
 			aa, err := Requests(url).Settls().
 				//notparse().
@@ -31,6 +32,7 @@ func Test_request(t *testing.T) {
 			//bb :=aa.settls()
 			if err != nil {
 				fmt.Println(err)
+				os.Exit(0)
 			}
 			//f1 := iowrite.Uflie("/tmp/bao.tar")
 			//f1.Readio_to_file(aa.RawBody())
@@ -38,12 +40,9 @@ func Test_request(t *testing.T) {
 			//body, err :=reader.re()
 			fmt.Println(aa)
 			var bb map[string]interface{}
-			
-			json.Unmarshal(aa.Body(),&bb)
+
+			json.Unmarshal(aa.Body(), &bb)
 			fmt.Println(bb)
-
-
-
 
 			b, _ := strconv.Atoi(aa.Header()["Content-Length"][0])
 			fmt.Println(b)
