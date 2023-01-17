@@ -3,10 +3,13 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"go_pull/pkgs/config"
 	"go_pull/pkgs/model"
 	"go_pull/pkgs/util/aes"
 	"go_pull/pkgs/util/check_path"
+	"go_pull/pkgs/util/conversion"
 	"go_pull/pkgs/util/iowrite"
 	"go_pull/pkgs/util/logtool"
 	"go_pull/pkgs/util/makestr"
@@ -35,6 +38,7 @@ var (
 	registry    string
 	platform    string
 	plist       bool
+
 )
 
 type download_parameter struct {
@@ -47,12 +51,18 @@ type download_parameter struct {
 	w        *sync.WaitGroup
 	progress string
 	tfile    *iowrite.Usefile
+	err  	error
 }
 
 func init() {
 	rootCmd.AddCommand(downloadCmd)
 	downloadCmd.PersistentFlags().StringVarP(&platform, "platform", "p", "amd64", "Select platform system architecture")
 	downloadCmd.PersistentFlags().BoolVarP(&plist, "list", "l", false, "list platform system architecture")
+	downloadCmd.PersistentFlags().IntVarP(&config.Ptimeout, "timeout", "t", 3, "timeout/s of the request")
+	downloadCmd.PersistentFlags().IntVarP(&config.Piotimeout, "iotimeout", "o", 100, "iotimeout/s of the request")
+	downloadCmd.PersistentFlags().IntVarP(&config.Retry, "retry", "r", 5, "Connection failure is the maximum number of retries")
+
+
 }
 
 var downloadCmd = &cobra.Command{
@@ -359,7 +369,31 @@ func Download_img(parameter download_parameter) {
 		Setheads(map[string]string{"Range": "bytes=" + strconv.Itoa(parameter.startbyt) + "-"}).
 		Settls().
 		Get()
-	logtool.Fatalerror(err)
+
+	defer func() {
+			if parameter.progress == "" {
+				return
+			}
+			parameter.tfile.Close()
+			if parameter.progress == "done" {
+				fmt.Printf("%v: Extracting...%v", parameter.ublob[7:19], strings.Repeat(" ", 50))
+				os.Stdout.Sync()
+	
+				fmt.Printf("%v: Pull complete \n",
+					parameter.ublob[7:19])
+				(*parameter.w).Done()
+			} 
+			if parameter.err != nil{
+				logtool.SugLog.Fatal(parameter.err)
+			}
+	}()
+
+	if err != nil{
+		parameter.progress="err"
+		parameter.err=err
+		return
+	}
+
 	if bresp.StatusCode() != 206 && bresp.StatusCode() != 200 {
 		logtool.SugLog.Warn(parameter.layer.(map[string]interface{}))
 		urls, ok := parameter.layer.(map[string]interface{})["urls"]
@@ -378,58 +412,43 @@ func Download_img(parameter download_parameter) {
 	}
 
 	//Stream download and follow the progress
-	unit, _ := strconv.Atoi(bresp.Header().Get("Content-Length"))
-	unit = unit / 50
+	totalLength, _ := strconv.Atoi(bresp.Header().Get("Content-Length"))
+	unit := totalLength / 50
 	acc := 0
 	nb_traits := 0
-	progress_bar(parameter.ublob, nb_traits)
 	buf := make([]byte, 8192)
 	reader := bufio.NewReader(bresp.RawBody())
 
 	for {
 		n, err := reader.Read(buf)
+		parameter.startbyt = parameter.startbyt + n
+		parameter.tfile.BufWriter.Write(buf[:n])
+		acc = acc + n
+		if acc > unit {
+			nb_traits = nb_traits + 1
+			progress_bar(parameter.ublob, nb_traits,
+				conversion.Humanize_intbytes(parameter.startbyt),
+				conversion.Humanize_intbytes(totalLength),
+			)
+			acc = 0
+		}
 		if err != nil {
 			if err == io.EOF {
 				fmt.Println("")
 				parameter.progress = "done"
 			} else {
 				logtool.SugLog.Warn(err, " ioerr")
-				if parameter.n >= 5 {
+
+				if parameter.n < 5 {
+					Download_img(parameter)
+				} else {
 					parameter.progress = "err"
-					return
+					parameter.err = errors.New("ioerr: reconnecting more than 5 times")
 				}
-				Download_img(parameter)
 			}
 			break
 		}
-		parameter.startbyt = parameter.startbyt + n
-		parameter.tfile.BufWriter.Write(buf[:n])
-		acc = acc + n
-		if acc > unit {
-			nb_traits = nb_traits + 1
-			progress_bar(parameter.ublob, nb_traits)
-			acc = 0
-		}
-
 	}
-	defer func() {
-		if parameter.progress == "" {
-			return
-		}
-		if parameter.progress == "done" {
-			fmt.Printf("%v: Extracting...%v", parameter.ublob[7:19], strings.Repeat(" ", 50))
-			os.Stdout.Sync()
-
-			fmt.Printf("%v: Pull complete [%v]\n",
-				parameter.ublob[7:19], bresp.Header()["Content-Length"])
-			(*parameter.w).Done()
-			parameter.tfile.Close()
-		} else if parameter.progress == "err" {
-			logtool.SugLog.Fatal("The network is abnormal, reconnecting more than 5 times")
-		}
-		parameter.tfile.Close()
-	}()
-
 }
 
 // Get Docker token (this function is useless for unauthenticated registries like Microsoft)
@@ -466,7 +485,7 @@ func get_auth_head(qtype string, a ...any) map[string]string {
 }
 
 // Docker style progress bar
-func progress_bar(ublob string, nb_traits int) {
+func progress_bar(ublob string, nb_traits int, now_bytes string, total_bytes string) {
 	fmt.Print(makestr.Joinstring("", ublob[7:19], ": Downloading ["))
 	for i := 0; i < nb_traits; i++ {
 		if i == nb_traits-1 {
@@ -478,6 +497,6 @@ func progress_bar(ublob string, nb_traits int) {
 	for i := 0; i < 49-nb_traits; i++ {
 		fmt.Print(" ")
 	}
-	fmt.Print("]\n")
+	fmt.Printf("] %v/%v\n", now_bytes, total_bytes)
 	os.Stdout.Sync()
 }

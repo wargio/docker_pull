@@ -3,7 +3,10 @@ package request
 import (
 	"crypto/tls"
 	"encoding/json"
+	"go_pull/pkgs/config"
 	"go_pull/pkgs/util/logtool"
+	"net"
+	"net/http"
 	"time"
 
 	//"fmt"
@@ -55,46 +58,56 @@ func (c *reqr) post(i ...string) (*resty.Response, error) {
 //type Logger struct {
 //}
 
-//func (e Logger) Errorf(format string, v ...interface{}) {
-//	//	for _, e := range v {
-//	//		switch e.(type) {
-//	//		case *url.Error:
-//	//			//fmt.Printf("%#v\v", e.(*url.Error))
-//	//			switch b := e.(*url.Error).Err.(type) {
-//	//			case *net.OpError:
-//	//				{
-//	//					fmt.Printf("%#v\n", b)
-//	//				}
-//	//			}
-//	//			//fmt.Println(a, "(asd)")
-//	//		}
-//	//		//if errors.Is(e, url.Error) {
-//	//		//	print(1)
-//	//	}
-//	//
-//	//	fmt.Printf("%#v\n", v)
+//	func (e Logger) Errorf(format string, v ...interface{}) {
+//		//	for _, e := range v {
+//		//		switch e.(type) {
+//		//		case *url.Error:
+//		//			//fmt.Printf("%#v\v", e.(*url.Error))
+//		//			switch b := e.(*url.Error).Err.(type) {
+//		//			case *net.OpError:
+//		//				{
+//		//					fmt.Printf("%#v\n", b)
+//		//				}
+//		//			}
+//		//			//fmt.Println(a, "(asd)")
+//		//		}
+//		//		//if errors.Is(e, url.Error) {
+//		//		//	print(1)
+//		//	}
+//		//
+//		//	fmt.Printf("%#v\n", v)
 //
-//}
+// }
 //
-//func (e Logger) Warnf(format string, v ...interface{}) {
-//}
+// func (e Logger) Warnf(format string, v ...interface{}) {
+// }
 //
-//func (e Logger) Debugf(format string, v ...interface{}) {
-//}
+// func (e Logger) Debugf(format string, v ...interface{}) {
+// }
+func TimeoutDialer(cTimeout time.Duration, rwTimeout time.Duration) func(net, addr string) (c net.Conn, err error) {
+	return func(netw, addr string) (net.Conn, error) {
+		conn, err := net.DialTimeout(netw, addr, cTimeout)
+		if err != nil {
+			return nil, err
+		}
+		conn.SetDeadline(time.Now().Add(rwTimeout))
+		return conn, nil
+	}
+}
 
 func Requests(url string) *reqr {
-	client := resty.New()
-	client.SetRetryCount(100).
+	client := resty.New().
+		SetTransport(&http.Transport{
+			Dial: TimeoutDialer(time.Duration(config.Ptimeout)*time.Second,
+				time.Duration(config.Piotimeout)*time.Second),
+		}).
+		SetRetryCount(config.Retry).
 		SetRetryWaitTime(1 * time.Second).
-		AddRetryAfterErrorCondition()
-		//AddRetryCondition(
-		//	func(response *resty.Response, err error) bool {
-		//		if !response.IsSuccess() {
-		//			return true
-		//		}
-		//		return false
-		//	},
-		//)
+		AddRetryCondition(
+			func(response *resty.Response, err error) bool {
+				return !response.IsSuccess() || err != nil
+			},
+		)
 
 	//client.SetLogger(&Logger{})
 	client.SetLogger(logtool.SugLog)
