@@ -86,7 +86,12 @@ func (c *reqr) post(i ...string) (*resty.Response, error) {
 // }
 func TimeoutDialer(cTimeout time.Duration, rwTimeout time.Duration) func(net, addr string) (c net.Conn, err error) {
 	return func(netw, addr string) (net.Conn, error) {
-		conn, err := net.DialTimeout(netw, addr, cTimeout)
+		//conn, err := net.DialTimeout(netw, addr, cTimeout)
+		d := net.Dialer{
+			Timeout:   cTimeout,
+			DualStack: true}
+		conn, err := d.Dial(netw, addr)
+
 		if err != nil {
 			return nil, err
 		}
@@ -98,11 +103,13 @@ func TimeoutDialer(cTimeout time.Duration, rwTimeout time.Duration) func(net, ad
 func Requests(url string) *reqr {
 	client := resty.New().
 		SetTransport(&http.Transport{
+			Proxy:             http.ProxyFromEnvironment,
+			ForceAttemptHTTP2: true,
 			Dial: TimeoutDialer(time.Duration(config.Ptimeout)*time.Second,
 				time.Duration(config.Piotimeout)*time.Second),
 		}).
 		SetRetryCount(config.Retry).
-		SetRetryWaitTime(1 * time.Second).
+		SetRetryWaitTime(100 * time.Nanosecond).
 		AddRetryCondition(
 			func(response *resty.Response, err error) bool {
 				return !response.IsSuccess() || err != nil

@@ -1,25 +1,32 @@
 package cmd
 
 import (
+	"go_pull/pkgs/config"
 	"go_pull/pkgs/util/logtool"
 
 	"github.com/spf13/cobra"
 )
 
-var rootCmd = &cobra.Command{
-	Use:   "gohttp",
-	Short: "get a image",
-	Long:  `get a image!`,
-	//	Run: func(cmd *cobra.Command, args []string) {
-	//		logtool.InitEvent()
-	//	},
-}
+var (
+	rootCmd = &cobra.Command{
+		Use:   "gopull",
+		Short: "get a image",
+		Long:  `get a image!`,
+		TraverseChildren: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			cmd.Help()
+		},
+	}
+	level  string
+	author string
+)
 
 func init() {
-	logtool.InitEvent()
+	logtool.InitEvent(config.DefaultLoglevel)
 }
 
 func Execute() {
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	if err := rootCmd.Execute(); err != nil {
 		logtool.SugLog.Fatal(err)
 	}

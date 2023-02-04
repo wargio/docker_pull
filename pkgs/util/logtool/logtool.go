@@ -4,15 +4,20 @@ import (
 	//"aopm-agnet/pkg/constant"
 	//"github.com/go-ini/ini"
 	//"github.com/natefinch/lumberjack"
+	"go_pull/pkgs/config"
+	"os"
+	"strings"
+	"time"
+
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"os"
-	"time"
 )
 
 var SugLog *zap.SugaredLogger
 var Logc *zap.Logger
-func InitEvent() {
+var zloglevel zap.AtomicLevel
+
+func InitEvent(loglevel string) {
 	//创建核心对象
 	var coreArr []zapcore.Core
 	//获取编码器
@@ -25,11 +30,11 @@ func InitEvent() {
 	//encoderConfig.EncodeCaller = zapcore.FullCallerEncoder        //显示完整文件路径
 	encoder := zapcore.NewConsoleEncoder(encoderConfig)
 	//配置日志级别
-	level := getConfigLog()
+	zloglevel = getConfigLog(loglevel)
 	//info和debug级别,debug级别是最低的
-	lowPriority := zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
-		return lev >= level
-	})
+	//lowPriority := zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
+	//	return lev >= level
+	//})
 	//error级别
 	//highPriority := zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
 	//	return lev >= zap.ErrorLevel
@@ -38,7 +43,7 @@ func InitEvent() {
 	//infoFileWriteSyncer := getInfoFileWriter()
 	//errorFileWriteSyncer := getErrorFileWriter()
 	//info文件writeSyncer
-	infoFileCore := zapcore.NewCore(encoder, zapcore.NewMultiWriteSyncer( zapcore.AddSync(os.Stdout)), lowPriority) //第三个及之后的参数为写入文件的日志级别,ErrorLevel模式只记录error级别的日志
+	infoFileCore := zapcore.NewCore(encoder, zapcore.NewMultiWriteSyncer(zapcore.AddSync(os.Stdout)), zloglevel) //第三个及之后的参数为写入文件的日志级别,ErrorLevel模式只记录error级别的日志
 	//error文件writeSyncer
 	//errorFileCore := zapcore.NewCore(encoder, zapcore.NewMultiWriteSyncer(zapcore.AddSync(os.Stdout)), highPriority) //第三个及之后的参数为写入文件的日志级别,ErrorLevel模式只记录error级别的日志
 	//处理
@@ -47,7 +52,7 @@ func InitEvent() {
 	//zap.AddCaller()为显示文件名和行号，可省略
 	//log := zap.New(zapcore.NewTee(coreArr...), zap.AddCaller(),zap.AddCallerSkip(1))
 	log := zap.New(zapcore.NewTee(coreArr...), zap.AddCaller())
-    //infoLog :=log.WithOptions(zap.AddCallerSkip(1))
+	//infoLog :=log.WithOptions(zap.AddCallerSkip(1))
 	//获取
 	SugLog = log.Sugar()
 	Logc = log.WithOptions(zap.AddCallerSkip(1))
@@ -55,10 +60,10 @@ func InitEvent() {
 	//SugLog.Infof("**********日志初始化完成 输出级别=[%v]**********", level)
 }
 
-//格式获取当前日志级别
-func getConfigLog() (level zapcore.Level) {
+// 格式获取当前日志级别
+func getConfigLog(loglevel string) (level zap.AtomicLevel) {
 	//默认日志级别设置
-	levelStr := "INFO"
+	//levelStr := "INFO"
 	//读取配置获取日志输出的级别(直接读取配置文件)
 	//cfg, err := ini.Load(constant.ConfigUrl)
 	////如果配置文件存在有效
@@ -72,8 +77,19 @@ func getConfigLog() (level zapcore.Level) {
 	//	}
 	//}
 	//默认日志级别
-	level, _ = zapcore.ParseLevel(levelStr)
-	//返回
+	//level, _ = zapcore.ParseLevel(loglevel)
+	//默认日志级别,动态
+	level, _ = zap.ParseAtomicLevel(loglevel)
 	return level
 }
 
+func Setloglevel(loglevel string) {
+	if strings.ToLower(loglevel) == config.DefaultLoglevel {
+		return
+	}
+	level, e := zapcore.ParseLevel(loglevel)
+	if e != nil {
+		Fatalerror(e)
+	}
+	zloglevel.SetLevel(level)
+}

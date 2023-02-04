@@ -1,6 +1,10 @@
 package config
+
 var (
-	Ptimeout int
+	Ptimeout   int
 	Piotimeout int
-	Retry	int
+	Retry      int
+	Loglevel   string
 )
+
+const DefaultLoglevel = "debug"

@@ -15,6 +15,6 @@ var versionCmd = &cobra.Command{
   Short: "Print the version number of pull",
   Long:  `All software has versions. This is pull's`,
   Run: func(cmd *cobra.Command, args []string) {
-    fmt.Println("gopull v1.0")
+    fmt.Println("gopull v3.0")
   },
 }

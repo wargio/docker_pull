@@ -57,11 +57,11 @@ type download_parameter struct {
 func init() {
 	rootCmd.AddCommand(downloadCmd)
 	downloadCmd.PersistentFlags().StringVarP(&platform, "platform", "p", "amd64", "Select platform system architecture")
-	downloadCmd.PersistentFlags().BoolVarP(&plist, "list", "l", false, "list platform system architecture")
+	downloadCmd.PersistentFlags().BoolVarP(&plist, "show", "s", false, "list platform system architecture")
 	downloadCmd.PersistentFlags().IntVarP(&config.Ptimeout, "timeout", "t", 3, "timeout/s of the request")
 	downloadCmd.PersistentFlags().IntVarP(&config.Piotimeout, "iotimeout", "o", 100, "iotimeout/s of the request")
 	downloadCmd.PersistentFlags().IntVarP(&config.Retry, "retry", "r", 5, "Connection failure is the maximum number of retries")
-
+	downloadCmd.PersistentFlags().StringVarP(&config.Loglevel, "level", "l", "debug", "log level: debug、info、warn、error")
 
 }
 
@@ -71,6 +71,7 @@ var downloadCmd = &cobra.Command{
 	Args:  cobra.MinimumNArgs(1),
 	Long:  `All software has versions. This is pull's`,
 	Run: func(cmd *cobra.Command, args []string) {
+		logtool.Setloglevel(config.Loglevel)
 		startdownload(args)
 	},
 }
@@ -156,6 +157,7 @@ func startdownload(args []string) {
 	//Get Docker authentication endpoint when it is required
 	auth_url = "https://auth.docker.io/token"
 	reg_service = "registry.docker.io"
+	logtool.SugLog.Debug("get docker auth_url...")
 	resp, err = request.Requests(
 		makestr.Joinstring("https://", registry, "/v2/")).
 		Settls().
@@ -179,6 +181,7 @@ func startdownload(args []string) {
 	} else {
 		real_tag = tag
 	}
+	logtool.SugLog.Debug("get docker auth header...")
 	auth_head = get_auth_head("application/vnd.docker.distribution.manifest.list.v2+json")
 	query_url := makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", real_tag)
 	resp, err := request.Requests(query_url).
@@ -194,8 +197,11 @@ func startdownload(args []string) {
 
 	platform_digest := get_platform_digest(resp_json)
 
+	logtool.SugLog.Debug("request again docker auth header if Expired...")
 	auth_head = get_auth_head("application/vnd.docker.distribution.manifest.v2+json")
 	query_url = makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", platform_digest)
+	
+	logtool.SugLog.Debug("get docker manifests...")
 	resp, err = request.Requests(query_url).
 		Setheads(auth_head).
 		Settls().
@@ -214,6 +220,8 @@ func startdownload(args []string) {
 	logtool.SugLog.Infof("Creating image structure in: %v", imgdir)
 
 	config := rresp["config"].(map[string]interface{})["digest"].(string)
+
+	logtool.SugLog.Debug("get docker blobs config...")
 	confresp, err := request.Requests(
 		makestr.Joinstring("https://", registry, "/v2/", repository, "/blobs/", config)).
 		Setheads(auth_head).
@@ -246,6 +254,7 @@ func startdownload(args []string) {
 
 	var parentid string
 	var last_fake_layerid string
+	logtool.SugLog.Debug("Start concurrent downloads...")
 	for x, layer := range layers {
 		ublob := layer.(map[string]interface{})["digest"].(string)
 		logtool.SugLog.Info(ublob)
