@@ -37,9 +37,18 @@
   ./gopull download -p arm64 redis
 ```
 
-### 4)&emsp;Compatible with docker pull
+### 5)&emsp;Compatible with docker pull
 ```
   ./gopull pull redis 
+```
+
+### 6)&emsp;Compatible with docker pull
+```
+  # docker导入
+  docker load -i redis.tar
+  
+  # ctr导入
+  ctr image import nginx.tar
 ```
 
 # Reference  https://github.com/NotGlop/docker-drag.git
