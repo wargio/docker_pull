@@ -42,7 +42,7 @@
   ./gopull pull redis 
 ```
 
-### 6)&emsp;Compatible with docker pull
+### 6)&emsp; Import the downloaded image
 ```
   # docker导入
   docker load -i redis.tar
