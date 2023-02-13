@@ -2,7 +2,6 @@ package tartool
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"fmt"
 	"io"
 	"log"
@@ -59,19 +58,19 @@ func IterDirectory(dirPath, subpath string, tw *tar.Writer) {
 	}
 }
 
-func TarGz(outFilePath string, inPath string) {
+func Tar(outFilePath string, inPath string) {
 	inPath = strings.TrimRight(inPath, "/")
 	// file write
 	fw, err := os.Create(outFilePath)
 	handleError(err)
 	defer fw.Close()
-
 	// gzip write
-	gw := gzip.NewWriter(fw)
-	defer gw.Close()
+	//gw := gzip.NewWriter(fw)
+	//defer gw.Close()
 
 	// tar write
-	tw := tar.NewWriter(gw)
+	//tw := tar.NewWriter(gw)
+	tw := tar.NewWriter(fw)
 	defer tw.Close()
 
 	IterDirectory(inPath, "", tw)

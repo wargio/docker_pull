@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"bufio"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,7 +38,6 @@ var (
 	registry    string
 	platform    string
 	plist       bool
-
 )
 
 type download_parameter struct {
@@ -51,7 +50,7 @@ type download_parameter struct {
 	w        *sync.WaitGroup
 	progress string
 	tfile    *iowrite.Usefile
-	err  	error
+	err      error
 }
 
 func init() {
@@ -200,7 +199,7 @@ func startdownload(args []string) {
 	logtool.SugLog.Debug("request again docker auth header if Expired...")
 	auth_head = get_auth_head("application/vnd.docker.distribution.manifest.v2+json")
 	query_url = makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", platform_digest)
-	
+
 	logtool.SugLog.Debug("get docker manifests...")
 	resp, err = request.Requests(query_url).
 		Setheads(auth_head).
@@ -277,7 +276,7 @@ func startdownload(args []string) {
 			w:        &wg,
 		})
 
-		content[0].Layers = append(content[0].Layers, makestr.Joinstring(fake_layerid, "/layer_gzip.tar"))
+		content[0].Layers = append(content[0].Layers, makestr.Joinstring(fake_layerid, "/layer.tar"))
 		//Creating json file
 		f2 := iowrite.Uflie(makestr.Joinstring(layerdir, "/json"))
 		//last layer = config manifest - history - rootfs
@@ -305,7 +304,7 @@ func startdownload(args []string) {
 		f2.BufWriter.Write(data)
 		f2.Close()
 
-		if x == len(layers) {
+		if x+1 == len(layers) {
 			last_fake_layerid = fake_layerid
 		}
 
@@ -345,7 +344,7 @@ func startdownload(args []string) {
 	if check_path.Check_path(img + ".tar").Exists() {
 		os.Remove(img + ".tar")
 	}
-	tartool.TarGz(img+".tar", imgdir)
+	tartool.Tar(img+".tar", imgdir)
 	os.RemoveAll(imgdir)
 	fmt.Printf("打包完成，生成文件 %v\n", img+".tar")
 }
@@ -360,7 +359,7 @@ func check_head(Header http.Header) bool {
 // func Download_img(layer interface{}, layerdir string, ublob string, length string, w *sync.WaitGroup) {
 func Download_img(parameter download_parameter) {
 	if parameter.n == 0 {
-		f1 := iowrite.Uflie(makestr.Joinstring(parameter.layerdir, "/layer_gzip.tar"))
+		f1 := iowrite.Uflie(makestr.Joinstring(parameter.layerdir, "/layer.tar"))
 		parameter.tfile = f1
 		logtool.SugLog.Infof("%v%v", parameter.ublob[7:19], ": Downloading...")
 	} else if parameter.n < 5 {
@@ -380,26 +379,26 @@ func Download_img(parameter download_parameter) {
 		Get()
 
 	defer func() {
-			if parameter.progress == "" {
-				return
-			}
-			parameter.tfile.Close()
-			if parameter.progress == "done" {
-				fmt.Printf("%v: Extracting...%v", parameter.ublob[7:19], strings.Repeat(" ", 50))
-				os.Stdout.Sync()
-	
-				fmt.Printf("%v: Pull complete \n",
-					parameter.ublob[7:19])
-				(*parameter.w).Done()
-			} 
-			if parameter.err != nil{
-				logtool.SugLog.Fatal(parameter.err)
-			}
+		if parameter.progress == "" {
+			return
+		}
+		parameter.tfile.Close()
+		if parameter.progress == "done" {
+			fmt.Printf("%v: Extracting...%v", parameter.ublob[7:19], strings.Repeat(" ", 50))
+			os.Stdout.Sync()
+
+			fmt.Printf("%v: Pull complete \n",
+				parameter.ublob[7:19])
+			(*parameter.w).Done()
+		}
+		if parameter.err != nil {
+			logtool.SugLog.Fatal(parameter.err)
+		}
 	}()
 
-	if err != nil{
-		parameter.progress="err"
-		parameter.err=err
+	if err != nil {
+		parameter.progress = "err"
+		parameter.err = err
 		return
 	}
 
@@ -426,7 +425,7 @@ func Download_img(parameter download_parameter) {
 	acc := 0
 	nb_traits := 0
 	buf := make([]byte, 8192)
-	reader := bufio.NewReader(bresp.RawBody())
+	reader, _ := gzip.NewReader(bresp.RawBody())
 
 	for {
 		n, err := reader.Read(buf)

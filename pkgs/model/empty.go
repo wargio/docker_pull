@@ -1,7 +1,5 @@
 package model
 
-
-
 type Container_config struct {
 	Hostname     string
 	Domainname   string
@@ -12,20 +10,20 @@ type Container_config struct {
 	Tty          bool
 	OpenStdin    bool
 	StdinOnce    bool
-	Env          string
-	Cmd          string
+	Env          []string
+	Cmd          []string
 	Image        string
-	Volumes      string
+	Volumes      interface{}
 	WorkingDir   string
-	Entrypoint   string
-	OnBuild      string
-	Labels       string
+	Entrypoint   interface{}
+	OnBuild      interface{}
+	Labels       interface{}
 }
 
-//type Empty struct {
-//	Created          string            `json:"created"`
-//	Container_config Container_config `json:"container_config"`
-//}
+//	type Empty struct {
+//		Created          string            `json:"created"`
+//		Container_config Container_config `json:"container_config"`
+//	}
 func Empty_config() map[string]interface{} {
 	Container_config_json := Container_config{
 		Hostname:     "",
@@ -45,10 +43,10 @@ func Empty_config() map[string]interface{} {
 		//		Entrypoint:   nil,
 		//		OnBuild:      nil,
 		//		Labels:       nil,
-	}	
+	}
 
 	out := map[string]interface{}{
-		"Created" : "1970-01-01T00:00:00Z",
+		"Created":          "1970-01-01T00:00:00Z",
 		"Container_config": Container_config_json,
 	}
 
