@@ -9,13 +9,14 @@ import (
 	"go_pull/pkgs/model"
 	"go_pull/pkgs/util/aes"
 	"go_pull/pkgs/util/check_path"
-	"go_pull/pkgs/util/conversion"
-	"go_pull/pkgs/util/iowrite"
+	"go_pull/pkgs/util/filetool"
 	"go_pull/pkgs/util/logtool"
 	"go_pull/pkgs/util/makestr"
+	"go_pull/pkgs/util/progress"
 	"go_pull/pkgs/util/request"
 	"go_pull/pkgs/util/tartool"
 	"go_pull/pkgs/util/timetool"
+
 	"io"
 	"net/http"
 	"os"
@@ -49,7 +50,7 @@ type download_parameter struct {
 	n        int
 	w        *sync.WaitGroup
 	progress string
-	tfile    *iowrite.Usefile
+	tfile    *os.File
 	err      error
 }
 
@@ -227,8 +228,8 @@ func startdownload(args []string) {
 		Settls().
 		Get()
 	logtool.Fatalerror(err)
-	f := iowrite.Uflie(makestr.Joinstring(imgdir, "/", config[7:], ".json"))
-	f.BufWriter.WriteString(confresp.String())
+	f := filetool.GetfileOjb(makestr.Joinstring(imgdir, "/", config[7:], ".json"))
+	f.WriteString(confresp.String())
 	f.Close()
 
 	content := model.Contentvar()
@@ -261,8 +262,8 @@ func startdownload(args []string) {
 		layerdir := makestr.Joinstring(imgdir, "/", fake_layerid)
 		os.Mkdir(layerdir, os.ModePerm)
 		//Creating VERSION file
-		vf := iowrite.Uflie(makestr.Joinstring(layerdir, "/VERSION"))
-		vf.BufWriter.WriteString("1.0")
+		vf := filetool.GetfileOjb(makestr.Joinstring(layerdir, "/VERSION"))
+		vf.WriteString("1.0")
 		vf.Close()
 
 		//layer interface{}, layerdir string, ublob string, length string, w *sync.WaitGroup
@@ -278,7 +279,7 @@ func startdownload(args []string) {
 
 		content[0].Layers = append(content[0].Layers, makestr.Joinstring(fake_layerid, "/layer.tar"))
 		//Creating json file
-		f2 := iowrite.Uflie(makestr.Joinstring(layerdir, "/json"))
+		f2 := filetool.GetfileOjb(makestr.Joinstring(layerdir, "/json"))
 		//last layer = config manifest - history - rootfs
 		var json_obj map[string]interface{}
 		if layers[len(layers)-1].(map[string]interface{})["digest"].(string) ==
@@ -301,7 +302,7 @@ func startdownload(args []string) {
 		}
 		parentid = fake_layerid
 		data, _ := json.Marshal(json_obj)
-		f2.BufWriter.Write(data)
+		f2.Write(data)
 		f2.Close()
 
 		if x+1 == len(layers) {
@@ -311,9 +312,9 @@ func startdownload(args []string) {
 	}
 	wg.Wait()
 
-	f3 := iowrite.Uflie(makestr.Joinstring(imgdir, "/manifest.json"))
+	f3 := filetool.GetfileOjb(makestr.Joinstring(imgdir, "/manifest.json"))
 	data, _ := json.Marshal(content)
-	f3.BufWriter.Write(data)
+	f3.Write(data)
 	f3.Close()
 
 	var content1 map[string](map[string]string)
@@ -329,9 +330,9 @@ func startdownload(args []string) {
 
 	}
 
-	f5 := iowrite.Uflie(makestr.Joinstring(imgdir, "/repositories"))
+	f5 := filetool.GetfileOjb(makestr.Joinstring(imgdir, "/repositories"))
 	data1, _ := json.Marshal(content1)
-	f5.BufWriter.Write(data1)
+	f5.Write(data1)
 	f5.Close()
 
 	//Create image tar and clean tmp folder
@@ -359,8 +360,7 @@ func check_head(Header http.Header) bool {
 // func Download_img(layer interface{}, layerdir string, ublob string, length string, w *sync.WaitGroup) {
 func Download_img(parameter download_parameter) {
 	if parameter.n == 0 {
-		f1 := iowrite.Uflie(makestr.Joinstring(parameter.layerdir, "/layer.tar"))
-		parameter.tfile = f1
+		parameter.tfile = filetool.GetfileOjb(makestr.Joinstring(parameter.layerdir, "/layer.tar.gz"))
 		logtool.SugLog.Infof("%v%v", parameter.ublob[7:19], ": Downloading...")
 	} else if parameter.n < 5 {
 		logtool.SugLog.Infof("%v%v", parameter.ublob[7:19], ": try to download again...")
@@ -383,6 +383,7 @@ func Download_img(parameter download_parameter) {
 			return
 		}
 		parameter.tfile.Close()
+		os.Remove(parameter.tfile.Name())
 		if parameter.progress == "done" {
 			fmt.Printf("%v: Extracting...%v", parameter.ublob[7:19], strings.Repeat(" ", 50))
 			os.Stdout.Sync()
@@ -421,29 +422,34 @@ func Download_img(parameter download_parameter) {
 
 	//Stream download and follow the progress
 	totalLength, _ := strconv.Atoi(bresp.Header().Get("Content-Length"))
-	unit := totalLength / 50
-	acc := 0
-	nb_traits := 0
-	buf := make([]byte, 8192)
-	reader, _ := gzip.NewReader(bresp.RawBody())
+	buf := make([]byte, 65536)
 
+	teeReader := io.TeeReader(bresp.RawBody(),
+		&progress.Progress{
+			Ublob:             parameter.ublob[7:19],
+			Total:             totalLength,
+			ProgressBarLength: 50,
+		},
+	)
+	if err != nil {
+		logtool.SugLog.Fatal(err)
+	}
 	for {
-		n, err := reader.Read(buf)
+		n, err := teeReader.Read(buf)
+
 		parameter.startbyt = parameter.startbyt + n
-		parameter.tfile.BufWriter.Write(buf[:n])
-		acc = acc + n
-		if acc > unit {
-			nb_traits = nb_traits + 1
-			progress_bar(parameter.ublob, nb_traits,
-				conversion.Humanize_intbytes(parameter.startbyt),
-				conversion.Humanize_intbytes(totalLength),
-			)
-			acc = 0
-		}
+		parameter.tfile.Write(buf[:n])
 		if err != nil {
 			if err == io.EOF {
 				fmt.Println("")
 				parameter.progress = "done"
+				fmt.Printf("%v: wait write to file...%v\n", parameter.ublob[7:19], strings.Repeat(" ", 50))
+				_, err=parameter.tfile.Seek(0, 0)
+				logtool.Fatalerror(err)
+				tarFile := filetool.GetfileOjb(makestr.Joinstring(parameter.layerdir, "/layer.tar"))
+				greader, err := gzip.NewReader(parameter.tfile)
+				_, err = io.Copy(tarFile, greader)
+				logtool.Fatalerror(err)
 			} else {
 				logtool.SugLog.Warn(err, " ioerr")
 
@@ -490,21 +496,4 @@ func get_auth_head(qtype string, a ...any) map[string]string {
 	}
 	return auth_head
 
-}
-
-// Docker style progress bar
-func progress_bar(ublob string, nb_traits int, now_bytes string, total_bytes string) {
-	fmt.Print(makestr.Joinstring("", ublob[7:19], ": Downloading ["))
-	for i := 0; i < nb_traits; i++ {
-		if i == nb_traits-1 {
-			fmt.Print(">")
-		} else {
-			fmt.Print("=")
-		}
-	}
-	for i := 0; i < 49-nb_traits; i++ {
-		fmt.Print(" ")
-	}
-	fmt.Printf("] %v/%v\n", now_bytes, total_bytes)
-	os.Stdout.Sync()
 }
