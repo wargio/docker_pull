@@ -17,8 +17,6 @@ var (
 			cmd.Help()
 		},
 	}
-	level  string
-	author string
 )
 
 func init() {

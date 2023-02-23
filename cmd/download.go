@@ -448,6 +448,7 @@ func Download_img(parameter download_parameter) {
 				logtool.Fatalerror(err)
 				tarFile := filetool.GetfileOjb(makestr.Joinstring(parameter.layerdir, "/layer.tar"))
 				greader, err := gzip.NewReader(parameter.tfile)
+				defer greader.Close()
 				_, err = io.Copy(tarFile, greader)
 				logtool.Fatalerror(err)
 			} else {
