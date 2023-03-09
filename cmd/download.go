@@ -56,10 +56,11 @@ type download_parameter struct {
 
 func init() {
 	rootCmd.AddCommand(downloadCmd)
-	downloadCmd.PersistentFlags().StringVarP(&platform, "platform", "p", "amd64", "Select platform system architecture")
+	downloadCmd.PersistentFlags().StringVarP(&platform, "platform", "p", "amd64",
+		"Select platform system architecture, such as arm64v8, among which v8 is the field variant if it exists")
 	downloadCmd.PersistentFlags().BoolVarP(&plist, "show", "s", false, "list platform system architecture")
 	downloadCmd.PersistentFlags().IntVarP(&config.Ptimeout, "timeout", "t", 3, "timeout/s of the request")
-	downloadCmd.PersistentFlags().IntVarP(&config.Piotimeout, "iotimeout", "o", 100, "iotimeout/s of the request")
+	downloadCmd.PersistentFlags().IntVarP(&config.Piotimeout, "iotimeout", "o", 20, "iotimeout/s of the request")
 	downloadCmd.PersistentFlags().IntVarP(&config.Retry, "retry", "r", 5, "Connection failure is the maximum number of retries")
 	downloadCmd.PersistentFlags().StringVarP(&config.Loglevel, "level", "l", "debug", "log level: debug、info、warn、error")
 
@@ -82,8 +83,10 @@ func get_platform_digest(resp_json map[string]interface{}) (platform_digest stri
 	if !isOk {
 		if !plist {
 
-			platform_digest_any, _ := resp_json["tag"]
-
+			platform_digest_any, Ok := resp_json["tag"]
+			if !Ok {
+				logtool.SugLog.Fatal("manifests have no tag key")
+			}
 			platform_digest = platform_digest_any.(string)
 			return
 		} else {
@@ -100,8 +103,12 @@ func get_platform_digest(resp_json map[string]interface{}) (platform_digest stri
 	for _, v := range manifests.([]interface{}) {
 
 		platformv := v.(map[string]interface{})["platform"]
-		platformv = platformv.(map[string]interface{})["architecture"].(string)
-		if platformv == platform {
+		platformvStr := platformv.(map[string]interface{})["architecture"].(string)
+		if variant, ok := platformv.(map[string]interface{})["variant"]; ok {
+			platformvStr = platformvStr + variant.(string)
+		}
+
+		if platformvStr == platform {
 			platform_digest = v.(map[string]interface{})["digest"].(string)
 			break
 		}
@@ -174,39 +181,38 @@ func startdownload(args []string) {
 		}
 	}
 	//Fetch manifest v2 and get image layer digests
+	var platform_digest string
 
-	var real_tag string
-	if digest != "" {
-		real_tag = digest
+	if digest == "" {
+		logtool.SugLog.Debug("get docker auth header...")
+		auth_head = get_auth_head("application/vnd.docker.distribution.manifest.list.v2+json")
+		queryManifestsListUrl := makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", tag)
+		resp, err := request.Requests(queryManifestsListUrl).
+			Setheads(auth_head).
+			Settls().
+			Get()
+		logtool.Errorerror(err)
+		if resp.StatusCode() != 200 {
+			logtool.SugLog.Fatal("[-] Cannot fetch manifest for %v [HTTP %v]", repository, resp.Status())
+		}
+		respJson := request.Parsebody_to_json(resp)
+
+		platform_digest = get_platform_digest(respJson)
 	} else {
-		real_tag = tag
+		platform_digest = digest
 	}
-	logtool.SugLog.Debug("get docker auth header...")
-	auth_head = get_auth_head("application/vnd.docker.distribution.manifest.list.v2+json")
-	query_url := makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", real_tag)
-	resp, err := request.Requests(query_url).
-		Setheads(auth_head).
-		Settls().
-		Get()
-	logtool.Errorerror(err)
-	if resp.StatusCode() != 200 {
-		logtool.SugLog.Fatal("[-] Cannot fetch manifest for %v [HTTP %v]", repository, resp.Status())
-	}
-
-	resp_json := request.Parsebody_to_json(resp)
-
-	platform_digest := get_platform_digest(resp_json)
 
 	logtool.SugLog.Debug("request again docker auth header if Expired...")
 	auth_head = get_auth_head("application/vnd.docker.distribution.manifest.v2+json")
-	query_url = makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", platform_digest)
+	queryManifestsUrl := makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", platform_digest)
 
 	logtool.SugLog.Debug("get docker manifests...")
-	resp, err = request.Requests(query_url).
+	resp, err = request.Requests(queryManifestsUrl).
 		Setheads(auth_head).
 		Settls().
 		Get()
-	logtool.Errorerror(err)
+	logtool.Fatalerror(err)
+	
 
 	rresp := request.Parsebody_to_json(resp)
 	layers := rresp["layers"].([]interface{})
@@ -444,7 +450,7 @@ func Download_img(parameter download_parameter) {
 				fmt.Println("")
 				parameter.progress = "done"
 				fmt.Printf("%v: wait write to file...%v\n", parameter.ublob[7:19], strings.Repeat(" ", 50))
-				_, err=parameter.tfile.Seek(0, 0)
+				_, err = parameter.tfile.Seek(0, 0)
 				logtool.Fatalerror(err)
 				tarFile := filetool.GetfileOjb(makestr.Joinstring(parameter.layerdir, "/layer.tar"))
 				greader, err := gzip.NewReader(parameter.tfile)
