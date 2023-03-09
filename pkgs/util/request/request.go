@@ -7,6 +7,7 @@ import (
 	"go_pull/pkgs/config"
 	"go_pull/pkgs/util/logtool"
 	"net"
+	"net/http"
 	"time"
 
 	//"fmt"
@@ -102,19 +103,16 @@ func TimeoutDialer(cTimeout time.Duration, rwTimeout time.Duration) func(net, ad
 
 func Requests(url string) *reqr {
 	client := resty.New().
-		//SetTransport(&http.Transport{
-		//	Proxy:             http.ProxyFromEnvironment,
-		//	ForceAttemptHTTP2: true,
-		//	Dial: TimeoutDialer(time.Duration(config.Ptimeout)*time.Second,
-		//		time.Duration(config.Piotimeout)*time.Second),
-		//}).
+		SetTransport(&http.Transport{
+			Proxy:             http.ProxyFromEnvironment,
+			ForceAttemptHTTP2: true,
+			Dial: TimeoutDialer(time.Duration(config.Ptimeout)*time.Second,
+				time.Duration(config.Piotimeout)*time.Second),
+		}).
 		SetRetryCount(config.Retry).
 		SetRetryWaitTime(100 * time.Nanosecond).
 		AddRetryCondition(
 			func(response *resty.Response, err error) bool {
-				//logtool.SugLog.Warn(response.StatusCode())
-				//logtool.SugLog.Warn(!response.IsSuccess())
-				//
 				return !response.IsSuccess() || err != nil
 			},
 		).OnAfterResponse(
