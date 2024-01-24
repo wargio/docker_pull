@@ -112,7 +112,16 @@ func get_platform_digest(resp_json map[string]interface{}) (platform_digest stri
 			platform_digest = v.(map[string]interface{})["digest"].(string)
 			break
 		}
-		platformv_list = append(platformv_list, platformv.(string))
+
+		switch v := platformv.(type) {
+		case string:
+			platformv_list = append(platformv_list, v)
+		case map[string]interface {}: {
+			platformv_list = append(platformv_list, v["os"].(string))
+		}
+		default:
+			fmt.Printf("unknown type: %+V\n", platformv)
+		}
 
 	}
 	if platform_digest == "" {
@@ -490,17 +499,26 @@ func get_auth_head(qtype string, a ...any) map[string]string {
 		Get()
 	logtool.Fatalerror(err)
 	resp_json := request.Parsebody_to_json(resp)
-	expires_in := int(resp_json["expires_in"].(float64))
+
+	auth_head := map[string]string{
+		"Authorization": makestr.Joinstring("Bearer ", resp_json["token"].(string)),
+		"Accept":     qtype,
+	}
+
+	expires_in := 24
+	switch v := resp_json["expires_in"].(type) {
+	case float64:
+		expires_in = int(v)
+	default:
+		return auth_head
+	}
 	issued_at := resp_json["issued_at"].(string)
 
 	expires_time := timetool.Strtorime(issued_at, "UTC").
 		Add(time.Duration(expires_in) * (time.Hour)).
 		Format("2006-01-02 15:04:05")
 
-	auth_head := map[string]string{"Authorization": makestr.Joinstring("Bearer ", resp_json["token"].(string)),
-		"Accept":     qtype,
-		"expires_in": expires_time,
-	}
+	auth_head["expires_in"] = expires_time
 	return auth_head
 
 }
