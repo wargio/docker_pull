@@ -9,9 +9,9 @@ import (
 
 var (
 	rootCmd = &cobra.Command{
-		Use:   "gopull",
-		Short: "get a image",
-		Long:  `get a image!`,
+		Use:              "gopull",
+		Short:            "get a image",
+		Long:             `get a image!`,
 		TraverseChildren: true,
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Help()

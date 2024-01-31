@@ -19,7 +19,5 @@ func GetfileOjb(filepath string) *os.File {
 	}
 	FileWrite, err := os.OpenFile(filepath, os.O_APPEND|os.O_RDWR, os.ModePerm)
 
-
-
 	return FileWrite
 }

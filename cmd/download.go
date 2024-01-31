@@ -12,7 +12,6 @@ import (
 	"go_pull/pkgs/util/filetool"
 	"go_pull/pkgs/util/logtool"
 	"go_pull/pkgs/util/makestr"
-	"go_pull/pkgs/util/progress"
 	"go_pull/pkgs/util/request"
 	"go_pull/pkgs/util/tartool"
 	"go_pull/pkgs/util/timetool"
@@ -26,6 +25,7 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
 
@@ -52,6 +52,7 @@ type download_parameter struct {
 	progress string
 	tfile    *os.File
 	err      error
+	multi    *pterm.MultiPrinter
 }
 
 func init() {
@@ -82,7 +83,6 @@ func get_platform_digest(resp_json map[string]interface{}) (platform_digest stri
 	manifests, isOk := resp_json["manifests"]
 	if !isOk {
 		if !plist {
-
 			platform_digest_any, Ok := resp_json["tag"]
 			if !Ok {
 				logtool.SugLog.Fatal("manifests have no tag key")
@@ -116,9 +116,10 @@ func get_platform_digest(resp_json map[string]interface{}) (platform_digest stri
 		switch v := platformv.(type) {
 		case string:
 			platformv_list = append(platformv_list, v)
-		case map[string]interface {}: {
-			platformv_list = append(platformv_list, v["os"].(string))
-		}
+		case map[string]interface{}:
+			{
+				platformv_list = append(platformv_list, v["os"].(string))
+			}
 		default:
 			fmt.Printf("unknown type: %+V\n", platformv)
 		}
@@ -191,18 +192,28 @@ func startdownload(args []string) {
 	}
 	//Fetch manifest v2 and get image layer digests
 	var platform_digest string
+	var header_qtype = "application/vnd.docker.distribution.manifest.list.v2+json"
 
 	if digest == "" {
 		logtool.SugLog.Debug("get docker auth header...")
-		auth_head = get_auth_head("application/vnd.docker.distribution.manifest.list.v2+json")
+		auth_head = get_auth_head(header_qtype)
 		queryManifestsListUrl := makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", tag)
+		//logtool.SugLog.Debugf("%s -> %+v", queryManifestsListUrl, auth_head)
 		resp, err := request.Requests(queryManifestsListUrl).
 			Setheads(auth_head).
 			Settls().
 			Get()
 		logtool.Errorerror(err)
+		if resp.StatusCode() == 404 {
+			header_qtype = "application/vnd.oci.image.index.v1+json"
+			auth_head = get_auth_head("application/vnd.oci.image.index.v1+json")
+			resp, err = request.Requests(queryManifestsListUrl).
+				Setheads(auth_head).
+				Settls().
+				Get()
+		}
 		if resp.StatusCode() != 200 {
-			logtool.SugLog.Fatal("[-] Cannot fetch manifest for %v [HTTP %v]", repository, resp.Status())
+			logtool.SugLog.Fatalf("[-] Cannot fetch manifest for %v [HTTP %v]", repository, resp.Status())
 		}
 		respJson := request.Parsebody_to_json(resp)
 
@@ -212,7 +223,11 @@ func startdownload(args []string) {
 	}
 
 	logtool.SugLog.Debug("request again docker auth header if Expired...")
-	auth_head = get_auth_head("application/vnd.docker.distribution.manifest.v2+json")
+	if header_qtype == "application/vnd.oci.image.index.v1+json" {
+		auth_head = get_auth_head("application/vnd.oci.image.manifest.v1+json")
+	} else {
+		auth_head = get_auth_head("application/vnd.docker.distribution.manifest.v2+json")
+	}
 	queryManifestsUrl := makestr.Joinstring("https://", registry, "/v2/", repository, "/manifests/", platform_digest)
 
 	logtool.SugLog.Debug("get docker manifests...")
@@ -221,7 +236,6 @@ func startdownload(args []string) {
 		Settls().
 		Get()
 	logtool.Fatalerror(err)
-	
 
 	rresp := request.Parsebody_to_json(resp)
 	layers := rresp["layers"].([]interface{})
@@ -269,10 +283,10 @@ func startdownload(args []string) {
 
 	var parentid string
 	var last_fake_layerid string
-	logtool.SugLog.Debug("Start concurrent downloads...")
+	multi := pterm.DefaultMultiPrinter
 	for x, layer := range layers {
 		ublob := layer.(map[string]interface{})["digest"].(string)
-		logtool.SugLog.Info(ublob)
+		logtool.SugLog.Debug("Start concurrent download for layer %s...", ublob[7:19])
 		fake_layerid := aes.Sha256t(makestr.Joinstring(parentid, "\n", ublob, "\n"))
 		layerdir := makestr.Joinstring(imgdir, "/", fake_layerid)
 		os.Mkdir(layerdir, os.ModePerm)
@@ -290,8 +304,8 @@ func startdownload(args []string) {
 			startbyt: 0,
 			n:        0,
 			w:        &wg,
+			multi:    &multi,
 		})
-
 		content[0].Layers = append(content[0].Layers, makestr.Joinstring(fake_layerid, "/layer.tar"))
 		//Creating json file
 		f2 := filetool.GetfileOjb(makestr.Joinstring(layerdir, "/json"))
@@ -325,7 +339,9 @@ func startdownload(args []string) {
 		}
 
 	}
+	multi.Start()
 	wg.Wait()
+	multi.Stop()
 
 	f3 := filetool.GetfileOjb(makestr.Joinstring(imgdir, "/manifest.json"))
 	data, _ := json.Marshal(content)
@@ -362,7 +378,7 @@ func startdownload(args []string) {
 	}
 	tartool.Tar(img+".tar", imgdir)
 	os.RemoveAll(imgdir)
-	fmt.Printf("打包完成，生成文件 %v\n", img+".tar")
+	fmt.Printf("Packaging is complete and the file is generated %v\n", img+".tar")
 }
 
 func check_head(Header http.Header) bool {
@@ -438,20 +454,11 @@ func Download_img(parameter download_parameter) {
 	//Stream download and follow the progress
 	totalLength, _ := strconv.Atoi(bresp.Header().Get("Content-Length"))
 	buf := make([]byte, 65536)
-
-	teeReader := io.TeeReader(bresp.RawBody(),
-		&progress.Progress{
-			Ublob:             parameter.ublob[7:19],
-			Total:             totalLength,
-			ProgressBarLength: 50,
-		},
-	)
-	if err != nil {
-		logtool.SugLog.Fatal(err)
-	}
+	teeReader := bresp.RawBody()
+	progressBar, _ := pterm.DefaultProgressbar.WithWriter(parameter.multi.NewWriter()).WithTotal(totalLength).WithShowCount(true).WithRemoveWhenDone(true).Start(parameter.ublob[7:19])
 	for {
 		n, err := teeReader.Read(buf)
-
+		progressBar.Add(n)
 		parameter.startbyt = parameter.startbyt + n
 		parameter.tfile.Write(buf[:n])
 		if err != nil {
@@ -470,6 +477,7 @@ func Download_img(parameter download_parameter) {
 				logtool.SugLog.Warn(err, " ioerr")
 
 				if parameter.n < 5 {
+					progressBar.Stop()
 					Download_img(parameter)
 				} else {
 					parameter.progress = "err"
@@ -501,8 +509,9 @@ func get_auth_head(qtype string, a ...any) map[string]string {
 	resp_json := request.Parsebody_to_json(resp)
 
 	auth_head := map[string]string{
+		"User-Agent":    "docker-client/19.0.6 (linux)",
 		"Authorization": makestr.Joinstring("Bearer ", resp_json["token"].(string)),
-		"Accept":     qtype,
+		"Accept":        qtype,
 	}
 
 	expires_in := 24
